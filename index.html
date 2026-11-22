@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Control de Inventario y Ventas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css?v=24" />
+</head>
+<body>
+  <div class="app-layout">
+    <!-- BARRA LATERAL MINIMALISTA CON LOGO DE MARCA Y TIPOGRAFÍA ESTILO GYMSHARK -->
+    <aside class="sidebar">
+      <div class="sidebar-brand" id="brand-header-btn" title="Haz clic para cambiar el nombre de la tienda">
+        <div class="brand-logo-wrap">
+          <img src="logo-marca.jpg" alt="Logo Marca" class="brand-shark-logo" id="brand-logo-img" />
+        </div>
+        <div class="brand-title" id="brand-business-name">GYMSHARK</div>
+        <span class="brand-rate-sub" id="brand-industry-label" style="display:none;"></span>
+      </div>
+
+      <ul class="nav-list" id="sidebar-nav">
+        <li class="nav-item">
+          <button class="nav-btn active" data-view="dashboard">
+            <span class="nav-btn-left">
+              <svg class="nav-icon" viewBox="0 0 24 24">
+                <path d="M18 20V10M12 20V4M6 20v-6" />
+              </svg>
+              <span>Resumen</span>
+            </span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-btn" data-view="pos">
+            <span class="nav-btn-left">
+              <svg class="nav-icon" viewBox="0 0 24 24">
+                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <path d="M16 10a4 4 0 0 1-8 0" />
+              </svg>
+              <span>Vender</span>
+            </span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-btn" data-view="inventory">
+            <span class="nav-btn-left">
+              <svg class="nav-icon" viewBox="0 0 24 24">
+                <path d="M12 3a2 2 0 0 1 2 2c0 1.1-.9 2-2 2v2l9 6v2H3v-2l9-6V7" />
+                <line x1="5" y1="17" x2="19" y2="17" />
+              </svg>
+              <span>Inventario</span>
+            </span>
+            <span class="nav-badge danger" id="nav-low-stock-badge" style="display:none;">0</span>
+          </button>
+        </li>
+        <li class="nav-item" data-admin-only="true">
+          <button class="nav-btn" data-view="batches">
+            <span class="nav-btn-left">
+              <svg class="nav-icon" viewBox="0 0 24 24">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line x1="12" y1="22.08" x2="12" y2="12" />
+              </svg>
+              <span>Lotes</span>
+            </span>
+          </button>
+        </li>
+        <li class="nav-item" data-admin-only="true">
+          <button class="nav-btn" data-view="costs">
+            <span class="nav-btn-left">
+              <svg class="nav-icon" viewBox="0 0 24 24">
+                <rect x="2" y="5" width="20" height="14" rx="2" />
+                <line x1="2" y1="10" x2="22" y2="10" />
+              </svg>
+              <span>Gastos</span>
+            </span>
+          </button>
+        </li>
+        <li class="nav-item" data-admin-only="true">
+          <button class="nav-btn" data-view="settings">
+            <span class="nav-btn-left">
+              <svg class="nav-icon" viewBox="0 0 24 24">
+                <line x1="4" y1="21" x2="4" y2="14" />
+                <line x1="4" y1="10" x2="4" y2="3" />
+                <line x1="12" y1="21" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12" y2="3" />
+                <line x1="20" y1="21" x2="20" y2="16" />
+                <line x1="20" y1="12" x2="20" y2="3" />
+                <line x1="1" y1="14" x2="7" y2="14" />
+                <line x1="9" y1="8" x2="15" y2="8" />
+                <line x1="17" y1="16" x2="23" y2="16" />
+              </svg>
+              <span>Ajustes</span>
+            </span>
+          </button>
+        </li>
+      </ul>
+
+      <div class="sidebar-footer">
+        <div class="role-box-sidebar">
+          <span class="role-label-small">Vista activa</span>
+          <select id="quick-user-switcher" class="sidebar-select"></select>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ÁREA PRINCIPAL LIMPIA -->
+    <div class="main-wrapper">
+      <!-- TIRA SUPERIOR DINÁMICA (Se oculta suavemente antes de llegar al borde burgundy) -->
+      <div class="info-ticker-bar no-print" id="info-ticker-bar">
+        <div class="info-ticker-viewport">
+          <div class="info-ticker-track" id="info-ticker-track"></div>
+        </div>
+      </div>
+
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 id="page-title">Resumen</h1>
+          <p id="page-subtitle">Balance claro de tus ventas, gastos y ganancia libre</p>
+        </div>
+
+        <div class="topbar-right" id="topbar-actions">
+          <!-- Botones contextuales limpios según la pantalla activa -->
+        </div>
+      </header>
+
+      <main class="content-area" id="main-content">
+        <!-- Contenido dinámico minimalista -->
+      </main>
+    </div>
+  </div>
+
+  <!-- VENTANA EMERGENTE (MODAL) -->
+  <div class="modal-backdrop hidden" id="app-modal">
+    <div class="modal-box" id="app-modal-box">
+      <div class="modal-header">
+        <h3 id="modal-title">Título</h3>
+        <button class="btn-icon-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer" id="modal-footer"></div>
+    </div>
+  </div>
+
+  <!-- NOTIFICACIONES -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="js/bundle.js?v=26"></script>
+</body>
+</html>
