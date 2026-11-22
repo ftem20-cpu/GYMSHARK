@@ -752,7 +752,14 @@ class DataService {
     this.batches = this._loadJSON(STORAGE_KEYS.BATCHES, INITIAL_BATCHES);
     this.purchases = this._loadJSON(STORAGE_KEYS.PURCHASES, INITIAL_PURCHASES);
     this.expenses = this._loadJSON(STORAGE_KEYS.EXPENSES, INITIAL_EXPENSES);
-    this.currentUser = this._loadJSON(STORAGE_KEYS.SESSION, INITIAL_USERS[0]);
+    // Por seguridad, siempre iniciar como Vendedor (empleado) al abrir la web;
+    // el acceso de Administrador siempre requiere contraseña al cambiar de vista.
+    const defaultVendor =
+      this.users.find(u => u.role === 'vendedor') ||
+      INITIAL_USERS.find(u => u.role === 'vendedor') ||
+      this.users[0];
+    this.currentUser = defaultVendor;
+    localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(defaultVendor));
 
     // Actualizar contraseña de administrador predeterminada a 'Anfitrion' sin tocar lotes ni inventario
     let usersChanged = false;
@@ -978,7 +985,17 @@ class DataService {
     if (Array.isArray(cloudProfile) && cloudProfile.length > 0 && cloudProfile[0].data) {
       this.profile = { ...this.profile, ...cloudProfile[0].data };
     }
-    if (Array.isArray(cloudUsers) && cloudUsers.length > 0) this.users = cloudUsers;
+    if (Array.isArray(cloudUsers) && cloudUsers.length > 0) {
+      this.users = cloudUsers;
+      // Si el usuario actual no está en la lista o es vendedor, sincronizar sus datos sin elevar permisos a admin
+      const refreshedCurrent = this.users.find(u => u.id === this.currentUser?.id);
+      if (refreshedCurrent) {
+        this.currentUser = refreshedCurrent;
+      } else {
+        const v = this.users.find(u => u.role === 'vendedor');
+        if (v) this.currentUser = v;
+      }
+    }
     if (Array.isArray(cloudProducts)) {
       this.products = cloudProducts.map(p => {
         const mapped = {
