@@ -157,6 +157,14 @@ class DataService {
       taxPercent: Math.max(0, Number(updates.taxPercent ?? this.profile.taxPercent) || 0)
     };
     this._saveAllLocal();
+    if (this.isCloudConnected()) {
+      this._supabaseRequest(
+        'store_profile',
+        'POST',
+        [{ id: 'main', data: this.profile, updated_at: new Date().toISOString() }],
+        'on_conflict=id'
+      ).catch(e => console.warn('Error sincronizando perfil:', e));
+    }
     return this.profile;
   }
 
@@ -185,9 +193,13 @@ class DataService {
       'Prefer': 'return=representation,resolution=merge-duplicates'
     };
 
-    const options = { method, headers };
+    const options = { method, headers, cache: 'no-store' };
     if (body !== null) {
       options.body = JSON.stringify(body);
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      throw new Error('Sin conexión a internet. Conéctate para sincronizar con la nube.');
     }
 
     const response = await fetch(endpoint, options);
@@ -388,6 +400,10 @@ class DataService {
       created_at: userData.created_at || new Date().toISOString()
     };
 
+    if (this.isCloudConnected()) {
+      await this._supabaseRequest('app_users', 'POST', [record], 'on_conflict=id');
+    }
+
     if (existingIdx >= 0) {
       this.users[existingIdx] = record;
     } else {
@@ -399,13 +415,6 @@ class DataService {
     }
 
     this._saveAllLocal();
-    if (this.isCloudConnected()) {
-      try {
-        await this._supabaseRequest('app_users', 'POST', [record], 'on_conflict=id');
-      } catch (e) {
-        console.warn('Error sincronizando usuario:', e);
-      }
-    }
     return record;
   }
 
@@ -443,7 +452,7 @@ class DataService {
       ? '-'
       : (productData.batch_code || 'LOTE-01').trim().toUpperCase();
 
-    let restockIso = new Date().toISOString();
+    let restockIso = null;
     if (productData.last_restock_at) {
       const parsedDate = new Date(productData.last_restock_at);
       if (!isNaN(parsedDate.getTime())) {
@@ -512,21 +521,16 @@ class DataService {
       updated_at: new Date().toISOString()
     };
 
+    if (this.isCloudConnected()) {
+      await this._supabaseRequest('products', 'POST', [record], 'on_conflict=id');
+    }
     const idx = this.products.findIndex(p => p.id === record.id);
     if (idx >= 0) {
       this.products[idx] = record;
     } else {
       this.products.unshift(record);
     }
-
     this._saveAllLocal();
-    if (this.isCloudConnected()) {
-      try {
-        await this._supabaseRequest('products', 'POST', [record], 'on_conflict=id');
-      } catch (e) {
-        console.warn('Error guardando producto:', e);
-      }
-    }
     return record;
   }
 
@@ -696,7 +700,12 @@ class DataService {
     const total = Number((subtotal - cleanDiscount).toFixed(2));
     const profit = Number((total - totalCost).toFixed(2));
 
-    const nextNum = this.sales.length + 1;
+    // Garantizar número de recibo único (tomando el máximo existente + 1 para evitar duplicados)
+    const maxReceiptNum = this.sales.reduce((max, s) => {
+      const m = String(s.receipt_number || '').match(/(\d+)$/);
+      return m ? Math.max(max, parseInt(m[1], 10)) : max;
+    }, this.sales.length);
+    const nextNum = maxReceiptNum + 1;
     const receiptNumber = `VTA-${String(nextNum).padStart(4, '0')}`;
     const saleStatus = status === 'pendiente' ? 'pendiente' : 'completada';
     const currentRate = Number(this.profile?.exchangeRate) || 0;
@@ -723,21 +732,21 @@ class DataService {
       items: processedItems
     };
 
-    this.sales.unshift(saleRecord);
-    this._saveAllLocal();
+    const uniqueUpdatedProducts = Array.from(
+      new Map(updatedProducts.map(p => [p.id, p])).values()
+    );
 
     if (this.isCloudConnected()) {
-      try {
-        await Promise.all([
-          this._supabaseRequest('sales', 'POST', [saleRecord], 'on_conflict=id'),
-          updatedProducts.length > 0
-            ? this._supabaseRequest('products', 'POST', updatedProducts, 'on_conflict=id')
-            : Promise.resolve()
-        ]);
-      } catch (e) {
-        console.warn('Error sincronizando venta:', e);
-      }
+      await Promise.all([
+        this._supabaseRequest('sales', 'POST', [saleRecord], 'on_conflict=id'),
+        uniqueUpdatedProducts.length > 0
+          ? this._supabaseRequest('products', 'POST', uniqueUpdatedProducts, 'on_conflict=id')
+          : Promise.resolve()
+      ]);
     }
+
+    this.sales.unshift(saleRecord);
+    this._saveAllLocal();
 
     return saleRecord;
   }
@@ -807,21 +816,21 @@ class DataService {
       }
     }
 
-    this.sales.splice(idx, 1);
-    this._saveAllLocal();
+    const uniqueUpdatedProducts = Array.from(
+      new Map(updatedProducts.map(p => [p.id, p])).values()
+    );
 
     if (this.isCloudConnected()) {
-      try {
-        await Promise.all([
-          this._supabaseRequest('sales', 'DELETE', null, `id=eq.${encodeURIComponent(saleId)}`),
-          updatedProducts.length > 0
-            ? this._supabaseRequest('products', 'POST', updatedProducts, 'on_conflict=id')
-            : Promise.resolve()
-        ]);
-      } catch (e) {
-        console.warn('Error al retomar venta pendiente:', e);
-      }
+      await Promise.all([
+        this._supabaseRequest('sales', 'DELETE', null, `id=eq.${encodeURIComponent(saleId)}`),
+        uniqueUpdatedProducts.length > 0
+          ? this._supabaseRequest('products', 'POST', uniqueUpdatedProducts, 'on_conflict=id')
+          : Promise.resolve()
+      ]);
     }
+
+    this.sales.splice(idx, 1);
+    this._saveAllLocal();
 
     return sale;
   }
@@ -851,19 +860,20 @@ class DataService {
       }
     }
 
-    this._saveAllLocal();
+    const uniqueUpdatedProducts = Array.from(
+      new Map(updatedProducts.map(p => [p.id, p])).values()
+    );
+
     if (this.isCloudConnected()) {
-      try {
-        await Promise.all([
-          this._supabaseRequest('sales', 'POST', [sale], 'on_conflict=id'),
-          updatedProducts.length > 0
-            ? this._supabaseRequest('products', 'POST', updatedProducts, 'on_conflict=id')
-            : Promise.resolve()
-        ]);
-      } catch (e) {
-        console.warn('Error sincronizando anulación:', e);
-      }
+      await Promise.all([
+        this._supabaseRequest('sales', 'POST', [sale], 'on_conflict=id'),
+        uniqueUpdatedProducts.length > 0
+          ? this._supabaseRequest('products', 'POST', uniqueUpdatedProducts, 'on_conflict=id')
+          : Promise.resolve()
+      ]);
     }
+
+    this._saveAllLocal();
     return sale;
   }
 
@@ -895,19 +905,24 @@ class DataService {
       ? new Date(batchData.purchased_date).toISOString()
       : (existing?.purchased_date || nowIso);
 
-    let inTransitDate = batchData.in_transit_date
-      ? new Date(batchData.in_transit_date).toISOString()
-      : (existing?.in_transit_date || null);
+    let inTransitDate =
+      batchData.in_transit_date !== undefined
+        ? (batchData.in_transit_date ? new Date(batchData.in_transit_date).toISOString() : null)
+        : (existing?.in_transit_date || null);
 
-    let arrivedDate = batchData.arrived_date
-      ? new Date(batchData.arrived_date).toISOString()
-      : (existing?.arrived_date || null);
+    let arrivedDate =
+      batchData.arrived_date !== undefined
+        ? (batchData.arrived_date ? new Date(batchData.arrived_date).toISOString() : null)
+        : (existing?.arrived_date || null);
 
-    if (status === 'en_via' && !inTransitDate) {
-      inTransitDate = nowIso;
-    }
-    if (status === 'llego') {
-      if (!inTransitDate) inTransitDate = purchasedDate;
+    if (status === 'adquirido') {
+      inTransitDate = null;
+      arrivedDate = null;
+    } else if (status === 'en_via') {
+      if (!inTransitDate) inTransitDate = nowIso;
+      arrivedDate = null;
+    } else if (status === 'llego') {
+      if (!inTransitDate) inTransitDate = nowIso;
       if (!arrivedDate) arrivedDate = nowIso;
     }
 
@@ -927,6 +942,10 @@ class DataService {
       notes: (batchData.notes || '').trim()
     };
 
+    if (this.isCloudConnected()) {
+      await this._supabaseRequest('batches', 'POST', [record], 'on_conflict=id');
+    }
+
     const idx = this.batches.findIndex(b => b.id === record.id);
     if (idx >= 0) {
       this.batches[idx] = record;
@@ -936,21 +955,19 @@ class DataService {
 
     // Si el lote llegó, actualizar la fecha de restock de las prendas asociadas a este lote
     if (status === 'llego' && arrivedDate) {
+      const touchedProds = [];
       this.products.forEach(p => {
         if ((p.batch_code || '').toUpperCase() === cleanCode) {
           p.last_restock_at = arrivedDate;
+          touchedProds.push(p);
         }
       });
+      if (this.isCloudConnected() && touchedProds.length > 0) {
+        await this._supabaseRequest('products', 'POST', touchedProds, 'on_conflict=id');
+      }
     }
 
     this._saveAllLocal();
-    if (this.isCloudConnected()) {
-      try {
-        await this._supabaseRequest('batches', 'POST', [record], 'on_conflict=id');
-      } catch (e) {
-        console.warn('Error sincronizando lote:', e);
-      }
-    }
     return record;
   }
 
@@ -963,10 +980,13 @@ class DataService {
 
     if (newStatus === 'adquirido') {
       if (!batch.purchased_date) batch.purchased_date = nowIso;
+      batch.in_transit_date = null;
+      batch.arrived_date = null;
     } else if (newStatus === 'en_via') {
-      if (!batch.in_transit_date) batch.in_transit_date = nowIso;
+      batch.in_transit_date = nowIso;
+      batch.arrived_date = null;
     } else if (newStatus === 'llego') {
-      if (!batch.in_transit_date) batch.in_transit_date = batch.purchased_date || nowIso;
+      if (!batch.in_transit_date) batch.in_transit_date = nowIso;
       batch.arrived_date = nowIso;
       // Actualizar fecha de llegada en las prendas de este lote
       this.products.forEach(p => {
@@ -976,14 +996,19 @@ class DataService {
       });
     }
 
-    this._saveAllLocal();
     if (this.isCloudConnected()) {
-      try {
-        await this._supabaseRequest('batches', 'POST', [batch], 'on_conflict=id');
-      } catch (e) {
-        console.warn('Error actualizando estado de lote:', e);
+      await this._supabaseRequest('batches', 'POST', [batch], 'on_conflict=id');
+      if (newStatus === 'llego') {
+        const touchedProds = this.products.filter(
+          p => (p.batch_code || '').toUpperCase() === batch.batch_code.toUpperCase()
+        );
+        if (touchedProds.length > 0) {
+          await this._supabaseRequest('products', 'POST', touchedProds, 'on_conflict=id');
+        }
       }
     }
+
+    this._saveAllLocal();
     return batch;
   }
 
@@ -1096,19 +1121,15 @@ class DataService {
       notes: (notes || '').trim()
     };
 
+    if (this.isCloudConnected()) {
+      await Promise.all([
+        this._supabaseRequest('purchases', 'POST', [purchaseRecord], 'on_conflict=id'),
+        this._supabaseRequest('products', 'POST', [product], 'on_conflict=id')
+      ]);
+    }
+
     this.purchases.unshift(purchaseRecord);
     this._saveAllLocal();
-
-    if (this.isCloudConnected()) {
-      try {
-        await Promise.all([
-          this._supabaseRequest('purchases', 'POST', [purchaseRecord], 'on_conflict=id'),
-          this._supabaseRequest('products', 'POST', [product], 'on_conflict=id')
-        ]);
-      } catch (e) {
-        console.warn('Error sincronizando compra:', e);
-      }
-    }
 
     return purchaseRecord;
   }
@@ -1130,16 +1151,13 @@ class DataService {
       notes: (notes || '').trim()
     };
 
+    if (this.isCloudConnected()) {
+      await this._supabaseRequest('expenses', 'POST', [expenseRecord], 'on_conflict=id');
+    }
+
     this.expenses.unshift(expenseRecord);
     this._saveAllLocal();
 
-    if (this.isCloudConnected()) {
-      try {
-        await this._supabaseRequest('expenses', 'POST', [expenseRecord], 'on_conflict=id');
-      } catch (e) {
-        console.warn('Error sincronizando gasto:', e);
-      }
-    }
     return expenseRecord;
   }
 
