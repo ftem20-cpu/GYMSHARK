@@ -2601,11 +2601,19 @@ function openProductModal(product = null) {
 
       ${
         isEdit
-          ? `<div class="form-group" style="background:var(--bg-oat-soft); padding:12px; border-radius:10px; border:1px solid var(--border-strong); margin-bottom:10px;">
-              <label>Precio de Venta al Cliente ($)</label>
-              <input type="number" step="0.01" min="0" class="input" id="prod-price" value="${p.sale_price}" style="font-weight:800; color:var(--primary);" />
-              <div style="font-size:11.5px; color:var(--text-secondary); margin-top:6px;">
-                Stock actual: <strong>${initTotalStock} prendas</strong> · Lote: <strong>${escapeHTML(p.batch_code || '-')}</strong> · Costo base (Compra + Envío): <strong>${fmtUSD(p.unit_cost)}</strong>
+          ? `<div style="background:var(--bg-oat-soft); padding:12px; border-radius:10px; border:1px solid var(--border-strong); margin-bottom:10px;">
+              <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap:10px;">
+                <div class="form-group" style="margin-bottom:0;">
+                  <label>Costo Pieza c/u ($)</label>
+                  <input type="number" step="0.01" min="0" class="input" id="prod-purchase-cost" value="${initPurchaseCost}" />
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                  <label>Precio de Venta ($)</label>
+                  <input type="number" step="0.01" min="0" class="input" id="prod-price" value="${p.sale_price}" style="font-weight:800; color:var(--primary);" />
+                </div>
+              </div>
+              <div style="font-size:11.5px; color:var(--text-secondary); margin-top:7px;">
+                Lote: <strong>${escapeHTML(p.batch_code || '-')}</strong> · Envío del lote: <strong>${fmtUSD(initShippingCost)} c/u</strong> · Stock: <strong>${initTotalStock}</strong>
               </div>
               <div id="prod-edit-profit-alert" style="margin-top:8px; padding:8px 10px; border-radius:8px; font-size:12px; font-weight:700;"></div>
             </div>`
@@ -2649,10 +2657,12 @@ function openProductModal(product = null) {
   if (isEdit) {
     const updateEditPriceAlert = () => {
       const priceInp = document.getElementById('prod-price');
+      const costInp = document.getElementById('prod-purchase-cost');
       const alertBox = document.getElementById('prod-edit-profit-alert');
       if (!priceInp || !alertBox) return;
       const newPrice = Number(priceInp.value) || 0;
-      const baseCost = Number(p.unit_cost) || 0;
+      const newPurchaseCost = Number(costInp?.value ?? initPurchaseCost) || 0;
+      const baseCost = Number((newPurchaseCost + initShippingCost).toFixed(2));
       const diff = Number((newPrice - baseCost).toFixed(2));
       if (diff < 0) {
         priceInp.style.borderColor = 'var(--danger)';
@@ -2661,7 +2671,7 @@ function openProductModal(product = null) {
         alertBox.style.background = 'var(--danger-bg)';
         alertBox.style.color = 'var(--danger)';
         alertBox.style.border = '1px solid var(--danger)';
-        alertBox.innerHTML = `⚠ Pérdida de ${fmtUSD(diff)} c/u — El precio está por debajo del costo base (${fmtUSD(baseCost)}).`;
+        alertBox.innerHTML = `⚠ Pérdida: ${fmtUSD(diff)} c/u (Costo total: ${fmtUSD(baseCost)})`;
       } else {
         priceInp.style.borderColor = '';
         priceInp.style.color = 'var(--primary)';
@@ -2669,11 +2679,12 @@ function openProductModal(product = null) {
         alertBox.style.background = 'var(--success-bg)';
         alertBox.style.color = 'var(--olive-dark)';
         alertBox.style.border = '1px solid var(--border-strong)';
-        alertBox.innerHTML = `✓ Ganancia libre: +${fmtUSD(diff)} c/u sobre el costo base (${fmtUSD(baseCost)}).`;
+        alertBox.innerHTML = `✓ Ganancia: +${fmtUSD(diff)} c/u (Costo total: ${fmtUSD(baseCost)})`;
       }
     };
     updateEditPriceAlert();
     document.getElementById('prod-price')?.addEventListener('input', updateEditPriceAlert);
+    document.getElementById('prod-purchase-cost')?.addEventListener('input', updateEditPriceAlert);
   }
 
   document.getElementById('prod-modal-cancel')?.addEventListener('click', closeModal);
@@ -2689,6 +2700,9 @@ function openProductModal(product = null) {
       const salePriceVal = isEdit
         ? (Number(document.getElementById('prod-price')?.value) || 0)
         : 0;
+      const purchaseCostVal = isEdit
+        ? (Number(document.getElementById('prod-purchase-cost')?.value) || 0)
+        : 0;
 
       await db.saveProduct({
         id: product ? product.id : null,
@@ -2703,9 +2717,9 @@ function openProductModal(product = null) {
         stock: isEdit ? initTotalStock : 0,
         min_stock: document.getElementById('prod-min-stock').value,
         unit: 'und',
-        purchase_cost: isEdit ? initPurchaseCost : 0,
+        purchase_cost: purchaseCostVal,
         shipping_cost: isEdit ? initShippingCost : 0,
-        unit_cost: isEdit ? Number((initPurchaseCost + initShippingCost).toFixed(2)) : 0,
+        unit_cost: isEdit ? Number((purchaseCostVal + initShippingCost).toFixed(2)) : 0,
         sale_price: salePriceVal
       });
       closeModal();

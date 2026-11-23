@@ -975,18 +975,37 @@ class DataService {
       this.batches.unshift(record);
     }
 
-    // Si el lote llegó, actualizar la fecha de restock de las prendas asociadas a este lote
-    if (status === 'llego' && arrivedDate) {
-      const touchedProds = [];
-      this.products.forEach(p => {
-        if ((p.batch_code || '').toUpperCase() === cleanCode) {
+    // Sincronizar cambios del lote con las prendas asociadas:
+    // 1) Si el lote tiene envío y cantidad de piezas, actualizar shipping_cost y unit_cost de sus prendas
+    // 2) Si el lote llegó, actualizar last_restock_at
+    const touchedProds = [];
+    const newShipPerPiece =
+      record.items_count > 0 && record.shipping_amount >= 0
+        ? Number((record.shipping_amount / record.items_count).toFixed(2))
+        : null;
+
+    this.products.forEach(p => {
+      if ((p.batch_code || '').toUpperCase() === cleanCode) {
+        let prodUpdated = false;
+        if (newShipPerPiece !== null) {
+          const basePurchase = Number(p.purchase_cost ?? p.unit_cost) || 0;
+          p.shipping_cost = newShipPerPiece;
+          p.unit_cost = Number((basePurchase + newShipPerPiece).toFixed(2));
+          prodUpdated = true;
+        }
+        if (status === 'llego' && arrivedDate) {
           p.last_restock_at = arrivedDate;
+          prodUpdated = true;
+        }
+        if (prodUpdated) {
+          p.updated_at = new Date().toISOString();
           touchedProds.push(p);
         }
-      });
-      if (this.isCloudConnected() && touchedProds.length > 0) {
-        await this._supabaseRequest('products', 'POST', touchedProds, 'on_conflict=id');
       }
+    });
+
+    if (this.isCloudConnected() && touchedProds.length > 0) {
+      await this._supabaseRequest('products', 'POST', touchedProds, 'on_conflict=id');
     }
 
     this._saveAllLocal();
