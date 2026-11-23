@@ -1735,6 +1735,7 @@ class DataService {
     purchase_cost,
     shipping_cost = 0,
     unit_cost,
+    sale_price = null,
     batch_code,
     restock_date,
     supplier,
@@ -1784,6 +1785,9 @@ class DataService {
     product.purchase_cost = Number(pCost.toFixed(2));
     product.shipping_cost = Number(sCost.toFixed(2));
     product.unit_cost = newCost;
+    if (sale_price !== null && sale_price !== undefined && !isNaN(Number(sale_price)) && Number(sale_price) >= 0) {
+      product.sale_price = Number(Number(sale_price).toFixed(2));
+    }
     if (hasSizesAdded) {
       STANDARD_SIZES.forEach(sz => {
         product.sizes_stock[sz] = Number((Number(product.sizes_stock[sz] || 0) + cleanSizesAdded[sz]).toFixed(2));
@@ -4380,7 +4384,7 @@ function openProductModal(product = null) {
 
   openModal({
     title: isEdit ? `Editar Prenda: ${p.name}` : 'Registrar Nueva Prenda en Catálogo',
-    maxWidth: '580px',
+    maxWidth: '500px',
     bodyHTML: `
       <!-- Imagen de referencia de la prenda -->
       <div class="img-upload-box">
@@ -4435,48 +4439,18 @@ function openProductModal(product = null) {
       </div>
 
       ${
-        !isEdit
-          ? `<div style="background:var(--bg-oat-soft); padding:10px 12px; border-radius:10px; border:1px dashed var(--border-strong); margin-bottom:14px; font-size:12px; color:var(--text-secondary);">
-              Aquí solo registras la ficha de la prenda en tu catálogo (inicia en <strong>0</strong>). Luego, en <strong>Nuevo Restock / Lote</strong>, indicas en qué lote llegó y cuántas unidades entraron por talla.
+        isEdit
+          ? `<div class="form-group" style="background:var(--bg-oat-soft); padding:12px; border-radius:10px; border:1px solid var(--border-strong); margin-bottom:10px;">
+              <label>Precio de Venta al Cliente ($)</label>
+              <input type="number" step="0.01" min="0" class="input" id="prod-price" value="${p.sale_price}" style="font-weight:800; color:var(--primary);" />
+              <div style="font-size:11.5px; color:var(--text-secondary); margin-top:6px;">
+                Stock actual: <strong>${initTotalStock} prendas</strong> · Lote: <strong>${escapeHTML(p.batch_code || '-')}</strong> · Costo actual: <strong>${fmtUSD(p.unit_cost)}</strong>
+              </div>
             </div>`
-          : `<div style="background:var(--bg-oat-soft); padding:10px 12px; border-radius:10px; border:1px solid var(--border-strong); margin-bottom:14px; font-size:12px; color:var(--text-secondary); display:flex; justify-content:space-between; align-items:center;">
-              <span>Stock actual: <strong style="color:var(--primary);">${initTotalStock} prendas</strong> (Lote: <strong>${escapeHTML(p.batch_code || '-')}</strong>)</span>
-              <span>Para sumar stock usa <strong>Nuevo Restock / Lote</strong></span>
+          : `<div style="background:var(--bg-oat-soft); padding:10px 12px; border-radius:10px; border:1px dashed var(--border-strong); font-size:12px; color:var(--text-secondary);">
+              Al guardar la prenda en tu catálogo, ve a <strong>Nuevo Restock / Lote</strong> para ingresar el lote, sus tallas, el costo de la pieza y su precio de venta.
             </div>`
       }
-
-      <!-- CALCULADORA DE COSTO POR PRENDA (COMPRA + ENVÍO) Y PRECIO DE VENTA -->
-      <div style="background:var(--bg-oat-soft); padding:14px; border-radius:12px; border:1px solid var(--border-strong); margin-bottom:12px;">
-        <div style="font-weight:800; font-size:13px; color:var(--primary); margin-bottom:10px;">
-          ${icon("box")} Costo de Referencia (Compra + Envío) y Precio de Venta
-        </div>
-
-        <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
-          <div class="form-group" style="margin-bottom:8px;">
-            <label>1. Costo Compra c/u ($)</label>
-            <input type="number" step="0.01" min="0" class="input" id="prod-purchase-cost" value="${initPurchaseCost}" placeholder="Lo que costó comprarla" />
-          </div>
-          <div class="form-group" style="margin-bottom:8px;">
-            <label>2. Costo Envío c/u ($)</label>
-            <input type="number" step="0.01" min="0" class="input" id="prod-shipping-cost" value="${initShippingCost}" placeholder="Envío por cada prenda" />
-          </div>
-        </div>
-
-        <div class="form-group" style="margin-bottom:0;">
-          <label>3. Precio de Venta al Cliente ($)</label>
-          <input type="number" step="0.01" min="0" class="input" id="prod-price" value="${p.sale_price}" style="font-weight:800; font-size:15px; color:var(--primary);" />
-          <div class="margin-helper-btns">
-            <span style="font-size:11.5px; color:var(--text-secondary); align-self:center; margin-right:4px;">Calcular precio sobre (Compra + Envío):</span>
-            <button type="button" class="margin-chip" data-markup="30">+30%</button>
-            <button type="button" class="margin-chip" data-markup="50">+50%</button>
-            <button type="button" class="margin-chip" data-markup="100">+100% (x2)</button>
-            <button type="button" class="margin-chip" data-markup="150">+150%</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- DESGLOSE DETALLADO DE CUENTAS Y GANANCIA -->
-      <div class="cart-summary" id="prod-margin-preview" style="margin-top:4px; background:#FAF8F4;"></div>
     `,
     footerHTML: `
       <button class="btn btn-outline" id="prod-modal-cancel">Cancelar</button>
@@ -4510,57 +4484,6 @@ function openProductModal(product = null) {
     if (imgInput) imgInput.value = '';
   });
 
-  const updateMarginPreview = () => {
-    const purchaseCost = Number(document.getElementById('prod-purchase-cost')?.value) || 0;
-    const shippingCost = Number(document.getElementById('prod-shipping-cost')?.value) || 0;
-    const totalUnitCost = Number((purchaseCost + shippingCost).toFixed(2));
-    const price = Number(document.getElementById('prod-price')?.value) || 0;
-    const unitProfit = Number((price - totalUnitCost).toFixed(2));
-    const marginPct = price > 0 ? ((unitProfit / price) * 100).toFixed(0) : '0';
-
-    const box = document.getElementById('prod-margin-preview');
-    if (box) {
-      box.innerHTML = `
-        <div style="font-weight:800; font-size:12.5px; color:var(--primary); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.3px;">
-          Resumen de Ganancia por Prenda
-        </div>
-        <div class="summary-row">
-          <span>Costo Compra (${fmtUSD(purchaseCost)}) + Envío (${fmtUSD(shippingCost)}):</span>
-          <strong>Te sale c/u en: ${fmtUSD(totalUnitCost)}</strong>
-        </div>
-        <div class="summary-row">
-          <span>Precio de Venta por prenda:</span>
-          <strong>${fmtUSD(price)}</strong>
-        </div>
-        <div class="summary-row" style="padding-top:6px; border-top:1px dashed var(--border-strong); margin-top:6px; margin-bottom:0;">
-          <span><strong>Ganancia Libre por cada 1 prenda:</strong></span>
-          <strong style="font-size:16px; color:${unitProfit >= 0 ? 'var(--olive-dark)' : 'var(--danger)'};">
-            ${unitProfit >= 0 ? '+' : ''}${fmtUSD(unitProfit)} (${marginPct}%)
-          </strong>
-        </div>
-      `;
-    }
-  };
-
-  document.querySelectorAll('[data-markup]').forEach(chip => {
-    chip.addEventListener('click', () => {
-      const pCost = Number(document.getElementById('prod-purchase-cost')?.value) || 0;
-      const sCost = Number(document.getElementById('prod-shipping-cost')?.value) || 0;
-      const totalUnitCost = pCost + sCost;
-      const pct = Number(chip.dataset.markup) || 50;
-      if (totalUnitCost > 0) {
-        document.getElementById('prod-price').value = Number((totalUnitCost * (1 + pct / 100)).toFixed(2));
-        updateMarginPreview();
-      } else {
-        showToast('Primero ingresa el costo de compra y envío.');
-      }
-    });
-  });
-
-  updateMarginPreview();
-  document.getElementById('prod-purchase-cost')?.addEventListener('input', updateMarginPreview);
-  document.getElementById('prod-shipping-cost')?.addEventListener('input', updateMarginPreview);
-  document.getElementById('prod-price')?.addEventListener('input', updateMarginPreview);
   document.getElementById('prod-modal-cancel')?.addEventListener('click', closeModal);
 
   document.getElementById('prod-modal-save')?.addEventListener('click', async () => {
@@ -4571,8 +4494,9 @@ function openProductModal(product = null) {
         showToast('Escribe el nombre y código de la prenda.');
         return;
       }
-      const purchaseCost = Number(document.getElementById('prod-purchase-cost').value) || 0;
-      const shippingCost = Number(document.getElementById('prod-shipping-cost').value) || 0;
+      const salePriceVal = isEdit
+        ? (Number(document.getElementById('prod-price')?.value) || 0)
+        : 0;
 
       await db.saveProduct({
         id: product ? product.id : null,
@@ -4587,15 +4511,15 @@ function openProductModal(product = null) {
         stock: isEdit ? initTotalStock : 0,
         min_stock: document.getElementById('prod-min-stock').value,
         unit: 'und',
-        purchase_cost: purchaseCost,
-        shipping_cost: shippingCost,
-        unit_cost: Number((purchaseCost + shippingCost).toFixed(2)),
-        sale_price: document.getElementById('prod-price').value
+        purchase_cost: isEdit ? initPurchaseCost : 0,
+        shipping_cost: isEdit ? initShippingCost : 0,
+        unit_cost: isEdit ? Number((initPurchaseCost + initShippingCost).toFixed(2)) : 0,
+        sale_price: salePriceVal
       });
       closeModal();
       updateChrome();
       renderCurrentView();
-      showToast(isEdit ? 'Prenda actualizada.' : 'Prenda registrada. Usa "Nuevo Restock / Lote" para ingresar sus tallas.');
+      showToast(isEdit ? 'Prenda actualizada.' : 'Prenda registrada. Ahora ve a "Nuevo Restock / Lote" para ingresar tallas y precio.');
     } catch (err) {
       showToast(err.message);
     }
@@ -5230,6 +5154,17 @@ function renderCostsAndPurchases(container, topActions) {
   }
 }
 
+function getBatchShippingPerPiece(batchCode) {
+  const b = (db.batches || []).find(
+    x => (x.batch_code || '').toUpperCase() === String(batchCode || '').trim().toUpperCase()
+  );
+  if (!b) return { batch: null, perPieceShip: 0 };
+  const items = Number(b.items_count) || 0;
+  const ship = Number(b.shipping_amount) || 0;
+  const perPieceShip = items > 0 && ship > 0 ? Number((ship / items).toFixed(2)) : 0;
+  return { batch: b, perPieceShip };
+}
+
 function openPurchaseModal(preselectedProductId = null) {
   const physicalProducts = db.products.filter(p => p.item_type !== 'service');
   if (!physicalProducts.length) {
@@ -5244,53 +5179,54 @@ function openPurchaseModal(preselectedProductId = null) {
     (initialProd.batch_code && initialProd.batch_code !== '-' ? initialProd.batch_code : 'LOTE-01');
 
   const initPurCost = initialProd.purchase_cost !== undefined ? initialProd.purchase_cost : initialProd.unit_cost;
-  const initShipCost = initialProd.shipping_cost !== undefined ? initialProd.shipping_cost : 0;
+  const { perPieceShip: initBatchShip } = getBatchShippingPerPiece(suggestedBatch);
+  const initShipCost = initBatchShip > 0 ? initBatchShip : (initialProd.shipping_cost || 0);
+  const initSalePrice = Number(initialProd.sale_price) || 0;
 
   openModal({
     title: 'Registrar Restock / Entrada de Lote',
-    maxWidth: '560px',
+    maxWidth: '550px',
     bodyHTML: `
-      <div class="form-group">
-        <label>Prenda que llegó *</label>
-        <select class="select" id="pur-product">
-          ${physicalProducts
-            .map(
-              p =>
-                `<option value="${escapeHTML(p.id)}" ${p.id === initialProd.id ? 'selected' : ''}>
-                  [${escapeHTML(p.category)}] ${escapeHTML(p.name)} (Stock actual: ${p.stock} · Venta: ${fmtUSD(p.sale_price)})
-                </option>`
-            )
-            .join('')}
-        </select>
+      <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+        <div class="form-group">
+          <label>Prenda *</label>
+          <select class="select" id="pur-product">
+            ${physicalProducts
+              .map(
+                p =>
+                  `<option value="${escapeHTML(p.id)}" ${p.id === initialProd.id ? 'selected' : ''}>
+                    ${escapeHTML(p.name)} (${p.stock} disp.)
+                  </option>`
+              )
+              .join('')}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Lote en el que llegó *</label>
+          ${
+            registeredBatches.length > 0
+              ? `<select class="select" id="pur-batch">
+                  ${registeredBatches
+                    .map(b => {
+                      const items = Number(b.items_count) || 0;
+                      const shipPerUnit = items > 0 ? (Number(b.shipping_amount || 0) / items).toFixed(2) : '0.00';
+                      return `<option value="${escapeHTML(b.batch_code)}" ${b.batch_code === suggestedBatch ? 'selected' : ''}>
+                        ${escapeHTML(b.batch_code)} (Envío c/u: $${shipPerUnit})
+                      </option>`;
+                    })
+                    .join('')}
+                </select>`
+              : `<input type="text" class="input" id="pur-batch" value="${escapeHTML(suggestedBatch)}" placeholder="Ej. LOTE-NOV-01" />`
+          }
+        </div>
       </div>
 
-      <!-- Solo selección de Lote registrado (la fecha se toma automáticamente del Lote) -->
-      <div class="form-group" style="background:var(--bg-oat-soft); padding:12px; border-radius:10px; border:1px solid var(--border-strong); margin-bottom:14px;">
-        <label>Lote en el que llegó *</label>
-        ${
-          registeredBatches.length > 0
-            ? `<select class="select" id="pur-batch">
-                ${registeredBatches
-                  .map(b => {
-                    const stLabel = b.status === 'llego' ? 'Llegó' : b.status === 'en_via' ? 'En Vía' : 'Adquirido';
-                    const dtLabel = b.arrived_date ? fmtShortDate(b.arrived_date) : fmtShortDate(b.purchased_date);
-                    return `<option value="${escapeHTML(b.batch_code)}" ${b.batch_code === suggestedBatch ? 'selected' : ''}>
-                      ${escapeHTML(b.batch_code)} · ${escapeHTML(b.description)} (${stLabel} · ${dtLabel})
-                    </option>`;
-                  })
-                  .join('')}
-              </select>`
-            : `<input type="text" class="input" id="pur-batch" value="${escapeHTML(suggestedBatch)}" placeholder="Ej. LOTE-NOV-01" />`
-        }
-        <small style="font-size:11px; color:var(--text-secondary); margin-top:4px;">
-          La fecha de entrada se enlaza automáticamente con la fecha de este lote.
-        </small>
-      </div>
-
+      <!-- Tallas que entran -->
       <div style="background:var(--bg-oat-soft); padding:12px; border-radius:12px; border:1px solid var(--border-strong); margin-bottom:14px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
           <label style="margin:0; font-weight:800; font-size:13px; color:var(--primary);">
-            Tallas que Entran en este Restock *
+            Tallas que Entran *
           </label>
           <span class="badge badge-success" id="pur-total-qty-badge">Total: 0 prendas</span>
         </div>
@@ -5312,69 +5248,90 @@ function openPurchaseModal(preselectedProductId = null) {
         </div>
       </div>
 
-      <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr;">
-        <div class="form-group">
-          <label>Total Prendas</label>
-          <input type="number" step="1" min="0" class="input" id="pur-qty" value="0" readonly style="background:var(--bg-oat); font-weight:800; color:var(--primary);" />
+      <!-- Costo sintetizado: Costo Pieza + Envío automático del Lote -> Precio Venta / Ganancia -->
+      <div style="background:var(--bg-oat-soft); padding:12px 14px; border-radius:12px; border:1px solid var(--border-strong); margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; font-size:12px;">
+          <span style="font-weight:800; color:var(--primary);">Cálculo Rápido de Precio</span>
+          <span class="badge badge-neutral" id="pur-batch-ship-pill" style="color:var(--primary); border:1px solid var(--border-strong);">
+            Envío del lote: ${fmtUSD(initShipCost)} c/u
+          </span>
         </div>
-        <div class="form-group">
-          <label>Costo Compra c/u ($)</label>
-          <input type="number" step="0.01" min="0" class="input" id="pur-purchase-cost" value="${initPurCost}" />
+
+        <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>Valor Unitario Pieza ($)</label>
+            <input type="number" step="0.01" min="0" class="input" id="pur-purchase-cost" value="${initPurCost}" placeholder="0.00" />
+          </div>
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>Precio de Venta ($)</label>
+            <input type="number" step="0.01" min="0" class="input" id="pur-sale-price" value="${initSalePrice}" style="font-weight:800; color:var(--primary);" placeholder="0.00" />
+          </div>
         </div>
-        <div class="form-group">
-          <label>Costo Envío c/u ($)</label>
-          <input type="number" step="0.01" min="0" class="input" id="pur-shipping-cost" value="${initShipCost}" />
+
+        <div class="margin-helper-btns" style="margin-top:4px;">
+          <span style="font-size:11px; color:var(--text-secondary); align-self:center; margin-right:4px;">Ganancia rápida:</span>
+          <button type="button" class="margin-chip" data-pur-markup="30">+30%</button>
+          <button type="button" class="margin-chip" data-pur-markup="50">+50%</button>
+          <button type="button" class="margin-chip" data-pur-markup="100">+100%</button>
         </div>
       </div>
 
-      <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-secondary); margin-bottom:12px; flex-wrap:wrap;">
-        <span>¿Pagaste un envío total por este paquete?</span>
-        <input type="number" step="0.01" min="0" class="input" id="pur-total-box-ship" placeholder="Envío total caja ($)" style="width:145px; padding:5px 9px; font-size:12px;" />
-        <span>(Se divide entre la cantidad)</span>
-      </div>
+      <input type="hidden" id="pur-qty" value="0" />
+      <input type="hidden" id="pur-shipping-cost" value="${initShipCost}" />
 
-      <div class="cart-summary" id="pur-calc-preview" style="background:#FAF8F4;"></div>
+      <div class="cart-summary" id="pur-calc-preview" style="background:#FAF8F4; margin-top:0; padding:12px 14px;"></div>
     `,
     footerHTML: `
       <button class="btn btn-outline" id="pur-cancel">Cancelar</button>
-      <button class="btn btn-primary" id="pur-save">Guardar Lote y Sumar Stock</button>
+      <button class="btn btn-primary" id="pur-save">Guardar Restock</button>
     `
   });
 
-  const updatePurPreview = () => {
+  const applyBatchShipping = () => {
+    const batchCode = document.getElementById('pur-batch')?.value || '';
+    const { batch, perPieceShip } = getBatchShippingPerPiece(batchCode);
     const prodId = document.getElementById('pur-product')?.value;
     const prod = db.products.find(p => p.id === prodId) || initialProd;
-    const qty = Math.max(1, Number(document.getElementById('pur-qty')?.value) || 1);
+    const shipCost = batch ? perPieceShip : (Number(prod?.shipping_cost) || 0);
+
+    const shipInp = document.getElementById('pur-shipping-cost');
+    const shipPill = document.getElementById('pur-batch-ship-pill');
+    if (shipInp) shipInp.value = shipCost;
+    if (shipPill) {
+      shipPill.textContent = batch
+        ? `Envío ${batch.batch_code}: ${fmtUSD(shipCost)} c/u`
+        : `Envío c/u: ${fmtUSD(shipCost)}`;
+    }
+  };
+
+  const updatePurPreview = () => {
+    const qty = Number(document.getElementById('pur-qty')?.value) || 0;
     const pCost = Number(document.getElementById('pur-purchase-cost')?.value) || 0;
     const sCost = Number(document.getElementById('pur-shipping-cost')?.value) || 0;
+    const salePrice = Number(document.getElementById('pur-sale-price')?.value) || 0;
     const realUnitCost = Number((pCost + sCost).toFixed(2));
-    const totalShipmentCost = Number((realUnitCost * qty).toFixed(2));
-    const unitProfit = Number((prod.sale_price - realUnitCost).toFixed(2));
+    const unitProfit = Number((salePrice - realUnitCost).toFixed(2));
     const batchProfit = Number((unitProfit * qty).toFixed(2));
 
     const box = document.getElementById('pur-calc-preview');
     if (box) {
       box.innerHTML = `
         <div class="summary-row">
-          <span>Compra (${fmtUSD(pCost)}) + Envío (${fmtUSD(sCost)}):</span>
-          <strong>Te sale c/u en: ${fmtUSD(realUnitCost)}</strong>
-        </div>
-        <div class="summary-row">
-          <span>Inversión Total de este Lote (${qty} prendas):</span>
-          <strong>${fmtUSD(totalShipmentCost)}</strong>
+          <span>Costo Real c/u (${fmtUSD(pCost)} pieza + ${fmtUSD(sCost)} envío):</span>
+          <strong>${fmtUSD(realUnitCost)}</strong>
         </div>
         <div class="summary-row" style="margin-bottom:0; padding-top:6px; border-top:1px dashed var(--border-strong);">
-          <span>Tu Ganancia Libre (vendiendo a ${fmtUSD(prod.sale_price)} c/u):</span>
-          <strong style="color:var(--olive-dark);">+${fmtUSD(unitProfit)} c/u (Lote: +${fmtUSD(batchProfit)})</strong>
+          <span><strong>Tu Ganancia Libre:</strong></span>
+          <strong style="color:${unitProfit >= 0 ? 'var(--olive-dark)' : 'var(--danger)'};">
+            ${unitProfit >= 0 ? '+' : ''}${fmtUSD(unitProfit)} c/u${qty > 0 ? ` · Total (${qty}): ${batchProfit >= 0 ? '+' : ''}${fmtUSD(batchProfit)}` : ''}
+          </strong>
         </div>
       `;
     }
   };
 
-  document.getElementById('pur-total-box-ship')?.addEventListener('input', e => {
-    const boxShip = Number(e.target.value) || 0;
-    const qty = Math.max(1, Number(document.getElementById('pur-qty')?.value) || 1);
-    document.getElementById('pur-shipping-cost').value = Number((boxShip / qty).toFixed(2));
+  document.getElementById('pur-batch')?.addEventListener('change', () => {
+    applyBatchShipping();
     updatePurPreview();
   });
 
@@ -5382,12 +5339,25 @@ function openPurchaseModal(preselectedProductId = null) {
     const prod = db.products.find(p => p.id === e.target.value);
     if (prod) {
       document.getElementById('pur-purchase-cost').value = prod.purchase_cost ?? prod.unit_cost;
-      document.getElementById('pur-shipping-cost').value = prod.shipping_cost || 0;
-      if (prod.batch_code && prod.batch_code !== '-') {
-        document.getElementById('pur-batch').value = prod.batch_code;
-      }
+      document.getElementById('pur-sale-price').value = Number(prod.sale_price) || 0;
+      applyBatchShipping();
       updatePurPreview();
     }
+  });
+
+  document.querySelectorAll('[data-pur-markup]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const pCost = Number(document.getElementById('pur-purchase-cost')?.value) || 0;
+      const sCost = Number(document.getElementById('pur-shipping-cost')?.value) || 0;
+      const totalUnit = pCost + sCost;
+      const pct = Number(chip.dataset.purMarkup) || 50;
+      if (totalUnit > 0) {
+        document.getElementById('pur-sale-price').value = Number((totalUnit * (1 + pct / 100)).toFixed(2));
+        updatePurPreview();
+      } else {
+        showToast('Ingresa primero el valor unitario de la pieza.');
+      }
+    });
   });
 
   const collectPurSizes = () => {
@@ -5403,11 +5373,6 @@ function openPurchaseModal(preselectedProductId = null) {
     const badgeEl = document.getElementById('pur-total-qty-badge');
     if (qtyInp) qtyInp.value = total;
     if (badgeEl) badgeEl.textContent = `Total: ${total} prendas`;
-
-    const boxShip = Number(document.getElementById('pur-total-box-ship')?.value) || 0;
-    if (boxShip > 0 && total > 0) {
-      document.getElementById('pur-shipping-cost').value = Number((boxShip / total).toFixed(2));
-    }
     return { map, total };
   };
 
@@ -5418,9 +5383,9 @@ function openPurchaseModal(preselectedProductId = null) {
     });
   });
 
-  document.getElementById('pur-qty')?.addEventListener('input', updatePurPreview);
   document.getElementById('pur-purchase-cost')?.addEventListener('input', updatePurPreview);
-  document.getElementById('pur-shipping-cost')?.addEventListener('input', updatePurPreview);
+  document.getElementById('pur-sale-price')?.addEventListener('input', updatePurPreview);
+  applyBatchShipping();
   updatePurPreview();
 
   document.getElementById('pur-cancel')?.addEventListener('click', closeModal);
@@ -5428,13 +5393,13 @@ function openPurchaseModal(preselectedProductId = null) {
     try {
       const { map: sizesAdded, total: totalQty } = collectPurSizes();
       const batchCode = document.getElementById('pur-batch').value;
-      const linkedBatch = (db.batches || []).find(
-        b => (b.batch_code || '').toUpperCase() === String(batchCode || '').trim().toUpperCase()
-      );
+      const { batch: linkedBatch, perPieceShip } = getBatchShippingPerPiece(batchCode);
       const autoDate = linkedBatch?.arrived_date || linkedBatch?.purchased_date || new Date().toISOString();
       const autoSupplier = linkedBatch?.supplier || 'Proveedor General';
       const pCost = Number(document.getElementById('pur-purchase-cost').value) || 0;
-      const sCost = Number(document.getElementById('pur-shipping-cost').value) || 0;
+      const sCost = linkedBatch ? perPieceShip : (Number(document.getElementById('pur-shipping-cost').value) || 0);
+      const salePrice = Number(document.getElementById('pur-sale-price').value) || 0;
+
       const rec = await db.createPurchase({
         product_id: document.getElementById('pur-product').value,
         batch_code: batchCode,
@@ -5444,12 +5409,13 @@ function openPurchaseModal(preselectedProductId = null) {
         purchase_cost: pCost,
         shipping_cost: sCost,
         unit_cost: Number((pCost + sCost).toFixed(2)),
+        sale_price: salePrice,
         supplier: autoSupplier
       });
       closeModal();
       updateChrome();
       renderCurrentView();
-      showToast(`Restock por tallas guardado en ${rec.batch_code} (+${rec.quantity} prendas).`);
+      showToast(`Restock guardado en ${rec.batch_code} (+${rec.quantity} prendas · Envío ${fmtUSD(sCost)} c/u).`);
     } catch (err) {
       showToast(err.message);
     }

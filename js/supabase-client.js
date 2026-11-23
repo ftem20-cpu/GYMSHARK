@@ -1034,6 +1034,7 @@ class DataService {
     purchase_cost,
     shipping_cost = 0,
     unit_cost,
+    sale_price = null,
     batch_code,
     restock_date,
     supplier,
@@ -1083,6 +1084,9 @@ class DataService {
     product.purchase_cost = Number(pCost.toFixed(2));
     product.shipping_cost = Number(sCost.toFixed(2));
     product.unit_cost = newCost;
+    if (sale_price !== null && sale_price !== undefined && !isNaN(Number(sale_price)) && Number(sale_price) >= 0) {
+      product.sale_price = Number(Number(sale_price).toFixed(2));
+    }
     if (hasSizesAdded) {
       STANDARD_SIZES.forEach(sz => {
         product.sizes_stock[sz] = Number((Number(product.sizes_stock[sz] || 0) + cleanSizesAdded[sz]).toFixed(2));
