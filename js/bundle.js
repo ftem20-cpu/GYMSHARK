@@ -2469,22 +2469,50 @@ function updateInfoTicker() {
   }
 
   const singlePass = items.join('<span class="ticker-sep">✦</span>');
-  // Duplicar para animación continua e infinita sin cortes
-  track.innerHTML = `${singlePass}<span class="ticker-sep">✦</span>${singlePass}<span class="ticker-sep">✦</span>`;
+  const nextTickerHTML = `${singlePass}<span class="ticker-sep">✦</span>${singlePass}<span class="ticker-sep">✦</span>`;
+  // Solo actualizar el DOM de la tira si cambió el texto, evitando que parpadee o se reinicie la animación
+  if (track.dataset.lastHtml !== nextTickerHTML) {
+    track.dataset.lastHtml = nextTickerHTML;
+    track.innerHTML = nextTickerHTML;
+  }
 }
 
 let lastCloudPullAt = 0;
 let isCloudPulling = false;
+let lastRenderedViewName = null;
 
 function getDataFingerprint() {
+  const normProducts = (db.products || []).map(p => ({
+    id: p.id,
+    name: p.name,
+    stock: Number(p.stock) || 0,
+    sale_price: Number(p.sale_price) || 0,
+    unit_cost: Number(p.unit_cost) || 0,
+    batch_code: p.batch_code || '',
+    sizes_stock: p.sizes_stock || {}
+  }));
+  const normSales = (db.sales || []).map(s => ({
+    id: s.id,
+    status: s.status,
+    total: Number(s.total) || 0,
+    payment_method: s.payment_method,
+    payment_reference: s.payment_reference || ''
+  }));
+  const normBatches = (db.batches || []).map(b => ({
+    id: b.id,
+    status: b.status,
+    total_cost: Number(b.total_cost) || 0,
+    items_count: Number(b.items_count) || 0
+  }));
   return JSON.stringify({
-    p: db.profile,
-    u: db.users,
-    pr: db.products,
-    s: db.sales,
-    b: db.batches,
-    pu: db.purchases,
-    e: db.expenses
+    name: db.profile?.businessName || '',
+    rate: Number(db.profile?.exchangeRate) || 0,
+    u: (db.users || []).length,
+    pr: normProducts,
+    s: normSales,
+    b: normBatches,
+    pu: (db.purchases || []).length,
+    e: (db.expenses || []).length
   });
 }
 
@@ -2532,14 +2560,12 @@ async function syncFromCloudLive(showNotification = false) {
       const hasChanges = beforeFingerprint !== afterFingerprint;
 
       if (hasChanges) {
-        const scrollPos = captureScrollPositions();
         updateChrome();
         // No re-renderizar si hay un modal abierto para no interrumpir lo que el usuario está escribiendo
         const modalEl = document.getElementById('app-modal');
         const isModalOpen = modalEl && !modalEl.classList.contains('hidden');
         if (!isModalOpen) {
           renderCurrentView();
-          restoreScrollPositions(scrollPos);
         }
       }
       if (showNotification) showToast('Datos sincronizados con la nube.');
@@ -2557,17 +2583,22 @@ async function syncFromCloudLive(showNotification = false) {
 function navigateTo(view) {
   state.currentView = view;
   updateChrome();
-  renderCurrentView();
+  renderCurrentView(false);
   // Si pasaron más de 8 segundos desde la última consulta, refrescar silenciosamente desde Supabase
   if (Date.now() - lastCloudPullAt > 8000) {
     syncFromCloudLive(false);
   }
 }
 
-function renderCurrentView() {
+function renderCurrentView(preserveScroll = true) {
   const container = document.getElementById('main-content');
   const topActions = document.getElementById('topbar-actions');
   if (!container) return;
+
+  const sameView = preserveScroll && lastRenderedViewName === state.currentView;
+  const savedScroll = sameView ? captureScrollPositions() : null;
+  lastRenderedViewName = state.currentView;
+
   if (topActions) topActions.innerHTML = '';
 
   switch (state.currentView) {
@@ -2591,6 +2622,10 @@ function renderCurrentView() {
       break;
     default:
       renderDashboard(container, topActions);
+  }
+
+  if (savedScroll) {
+    restoreScrollPositions(savedScroll);
   }
 }
 
@@ -2926,8 +2961,9 @@ function renderPOS(container, topActions) {
   });
 
   const subtotal = state.posCart.reduce((acc, item) => acc + item.quantity * item.sale_price, 0);
-  const discount = Math.min(subtotal, Math.max(0, Number(state.posDiscount) || 0));
-  const total = Math.max(0, subtotal - discount);
+  const discPct = Math.min(100, Math.max(0, parseFloat(String(state.posDiscount).replace(',', '.')) || 0));
+  const discount = Number(((subtotal * discPct) / 100).toFixed(2));
+  const total = Math.max(0, Number((subtotal - discount).toFixed(2)));
   const secondaryTotal = fmtSecondary(total);
 
   container.innerHTML = `
@@ -3098,13 +3134,13 @@ function renderPOS(container, topActions) {
                 </select>
               </div>
               <div class="form-group" style="margin-bottom:0;">
-                <label>Descuento ($)</label>
+                <label>Descuento (%)</label>
                 <input
                   type="text"
                   inputmode="decimal"
                   class="input"
                   id="pos-discount"
-                  placeholder="0.00"
+                  placeholder="0%"
                   value="${escapeHTML(state.posDiscount)}"
                 />
               </div>
@@ -3123,6 +3159,14 @@ function renderPOS(container, topActions) {
           </div>
 
           <div class="cart-summary">
+            <div
+              id="pos-discount-line"
+              class="summary-row"
+              style="font-size:12.5px; color:var(--olive-dark); font-weight:700; ${discount > 0 ? '' : 'display:none;'}"
+            >
+              <span id="pos-discount-label">Descuento (${discPct}%):</span>
+              <span id="pos-discount-amount">-${fmtUSD(discount)}</span>
+            </div>
             <div class="summary-row total" style="border-top:none; padding-top:0; margin-top:0;">
               <span>Total:</span>
               <span id="pos-total-usd">${fmtUSD(total)}</span>
@@ -3256,14 +3300,21 @@ function renderPOS(container, topActions) {
     state.posPaymentReference = e.target.value;
   });
 
-  // Actualización en vivo del descuento sin recargar el DOM (permite escribir números y decimales libremente)
+  // Actualización en vivo del descuento en PORCENTAJE (%) sin recargar el DOM
   document.getElementById('pos-discount')?.addEventListener('input', e => {
     state.posDiscount = e.target.value;
-    const parsedDisc = parseFloat(String(e.target.value).replace(',', '.')) || 0;
+    const pct = Math.min(100, Math.max(0, parseFloat(String(e.target.value).replace(',', '.')) || 0));
     const currentSub = state.posCart.reduce((acc, item) => acc + item.quantity * item.sale_price, 0);
-    const cleanDisc = Math.min(currentSub, Math.max(0, parsedDisc));
-    const newTotal = Math.max(0, currentSub - cleanDisc);
+    const cleanDisc = Number(((currentSub * pct) / 100).toFixed(2));
+    const newTotal = Math.max(0, Number((currentSub - cleanDisc).toFixed(2)));
     const newSec = fmtSecondary(newTotal);
+
+    const discLine = document.getElementById('pos-discount-line');
+    const discLbl = document.getElementById('pos-discount-label');
+    const discAmt = document.getElementById('pos-discount-amount');
+    if (discLine) discLine.style.display = cleanDisc > 0 ? '' : 'none';
+    if (discLbl) discLbl.textContent = `Descuento (${pct}%):`;
+    if (discAmt) discAmt.textContent = `-${fmtUSD(cleanDisc)}`;
 
     const usdEl = document.getElementById('pos-total-usd');
     const bsEl = document.getElementById('pos-total-bs');
@@ -3289,12 +3340,14 @@ function renderPOS(container, topActions) {
 
 async function processCartCheckout(status = 'completada', customPaymentMethod = null, customCustomer = null, customReference = null) {
   try {
-    const parsedDisc = parseFloat(String(state.posDiscount).replace(',', '.')) || 0;
+    const subtotal = state.posCart.reduce((acc, item) => acc + item.quantity * item.sale_price, 0);
+    const pct = Math.min(100, Math.max(0, parseFloat(String(state.posDiscount).replace(',', '.')) || 0));
+    const discountUSD = Number(((subtotal * pct) / 100).toFixed(2));
     const sale = await db.createSale({
       customer_name: (customCustomer ?? state.posCustomer) || 'Cliente General',
       payment_method: customPaymentMethod ?? state.posPaymentMethod,
       payment_reference: customReference ?? state.posPaymentReference,
-      discount: parsedDisc,
+      discount: discountUSD,
       status,
       items: state.posCart
     });
@@ -3322,9 +3375,9 @@ async function processCartCheckout(status = 'completada', customPaymentMethod = 
 
 function openCheckoutConfirmModal() {
   const subtotal = state.posCart.reduce((acc, item) => acc + item.quantity * item.sale_price, 0);
-  const parsedDisc = parseFloat(String(state.posDiscount).replace(',', '.')) || 0;
-  const discount = Math.min(subtotal, Math.max(0, parsedDisc));
-  const total = Math.max(0, subtotal - discount);
+  const discPct = Math.min(100, Math.max(0, parseFloat(String(state.posDiscount).replace(',', '.')) || 0));
+  const discount = Number(((subtotal * discPct) / 100).toFixed(2));
+  const total = Math.max(0, Number((subtotal - discount).toFixed(2)));
   const secTotal = fmtSecondary(total);
 
   openModal({
@@ -3365,7 +3418,7 @@ function openCheckoutConfirmModal() {
         </div>
         ${
           discount > 0
-            ? `<div class="summary-row"><span>Descuento:</span><span>-${fmtUSD(discount)}</span></div>`
+            ? `<div class="summary-row" style="color:var(--olive-dark); font-weight:700;"><span>Descuento (${discPct}%):</span><span>-${fmtUSD(discount)}</span></div>`
             : ''
         }
         <div class="summary-row total">
@@ -3571,7 +3624,10 @@ function renderPendingSalesInline(container) {
       try {
         const sale = await db.resumePendingSaleToCart(btn.dataset.resumePending);
         state.posCustomer = sale.customer_name;
-        state.posDiscount = sale.discount ? String(sale.discount) : '';
+        state.posDiscount =
+          sale.discount && sale.subtotal > 0
+            ? String(Number(((sale.discount / sale.subtotal) * 100).toFixed(2)))
+            : '';
         state.posPaymentReference = sale.payment_reference || '';
         state.posCart = (sale.items || []).map(it => {
           const prod = db.products.find(p => p.id === it.product_id);
@@ -4428,14 +4484,25 @@ function renderInventory(container, topActions) {
                                 </td>`
                               : ''
                           }
-                          <td><strong>${fmtUSD(p.sale_price)}</strong></td>
+                          <td>
+                            <strong style="${profit < 0 && p.sale_price > 0 ? 'color:var(--danger);' : ''}">
+                              ${fmtUSD(p.sale_price)}
+                            </strong>
+                            ${
+                              profit < 0 && p.sale_price > 0
+                                ? `<div style="font-size:10.5px; color:var(--danger); font-weight:700;">Bajo costo</div>`
+                                : ''
+                            }
+                          </td>
                           ${
                             admin
                               ? `
                             <td>
-                              <span class="badge badge-success">+${fmtUSD(profit)} c/u</span>
-                              <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">
-                                Lote: +${fmtUSD(Math.max(0, p.stock) * profit)}
+                              <span class="badge ${profit < 0 ? 'badge-danger' : 'badge-success'}">
+                                ${profit >= 0 ? '+' : ''}${fmtUSD(profit)} c/u
+                              </span>
+                              <div style="font-size:11px; color:${profit < 0 ? 'var(--danger)' : 'var(--text-secondary)'}; font-weight:${profit < 0 ? '700' : '400'}; margin-top:2px;">
+                                Lote: ${profit >= 0 ? '+' : ''}${fmtUSD(Math.max(0, p.stock) * profit)}
                               </div>
                             </td>
                             <td style="text-align:right; white-space:nowrap;">
@@ -4591,8 +4658,9 @@ function openProductModal(product = null) {
               <label>Precio de Venta al Cliente ($)</label>
               <input type="number" step="0.01" min="0" class="input" id="prod-price" value="${p.sale_price}" style="font-weight:800; color:var(--primary);" />
               <div style="font-size:11.5px; color:var(--text-secondary); margin-top:6px;">
-                Stock actual: <strong>${initTotalStock} prendas</strong> · Lote: <strong>${escapeHTML(p.batch_code || '-')}</strong> · Costo actual: <strong>${fmtUSD(p.unit_cost)}</strong>
+                Stock actual: <strong>${initTotalStock} prendas</strong> · Lote: <strong>${escapeHTML(p.batch_code || '-')}</strong> · Costo base (Compra + Envío): <strong>${fmtUSD(p.unit_cost)}</strong>
               </div>
+              <div id="prod-edit-profit-alert" style="margin-top:8px; padding:8px 10px; border-radius:8px; font-size:12px; font-weight:700;"></div>
             </div>`
           : `<div style="background:var(--bg-oat-soft); padding:10px 12px; border-radius:10px; border:1px dashed var(--border-strong); font-size:12px; color:var(--text-secondary);">
               Al guardar la prenda en tu catálogo, ve a <strong>Nuevo Restock / Lote</strong> para ingresar el lote, sus tallas, el costo de la pieza y su precio de venta.
@@ -4630,6 +4698,36 @@ function openProductModal(product = null) {
     imgClearBtn.style.display = 'none';
     if (imgInput) imgInput.value = '';
   });
+
+  if (isEdit) {
+    const updateEditPriceAlert = () => {
+      const priceInp = document.getElementById('prod-price');
+      const alertBox = document.getElementById('prod-edit-profit-alert');
+      if (!priceInp || !alertBox) return;
+      const newPrice = Number(priceInp.value) || 0;
+      const baseCost = Number(p.unit_cost) || 0;
+      const diff = Number((newPrice - baseCost).toFixed(2));
+      if (diff < 0) {
+        priceInp.style.borderColor = 'var(--danger)';
+        priceInp.style.color = 'var(--danger)';
+        priceInp.style.backgroundColor = 'var(--danger-bg)';
+        alertBox.style.background = 'var(--danger-bg)';
+        alertBox.style.color = 'var(--danger)';
+        alertBox.style.border = '1px solid var(--danger)';
+        alertBox.innerHTML = `⚠ Pérdida de ${fmtUSD(diff)} c/u — El precio está por debajo del costo base (${fmtUSD(baseCost)}).`;
+      } else {
+        priceInp.style.borderColor = '';
+        priceInp.style.color = 'var(--primary)';
+        priceInp.style.backgroundColor = '#FFFFFF';
+        alertBox.style.background = 'var(--success-bg)';
+        alertBox.style.color = 'var(--olive-dark)';
+        alertBox.style.border = '1px solid var(--border-strong)';
+        alertBox.innerHTML = `✓ Ganancia libre: +${fmtUSD(diff)} c/u sobre el costo base (${fmtUSD(baseCost)}).`;
+      }
+    };
+    updateEditPriceAlert();
+    document.getElementById('prod-price')?.addEventListener('input', updateEditPriceAlert);
+  }
 
   document.getElementById('prod-modal-cancel')?.addEventListener('click', closeModal);
 
