@@ -877,6 +877,28 @@ class DataService {
     return sale;
   }
 
+  async deleteSale(saleId) {
+    const idx = this.sales.findIndex(s => s.id === saleId);
+    if (idx === -1) throw new Error('Venta no encontrada.');
+    if (this.isCloudConnected()) {
+      await this._supabaseRequest('sales', 'DELETE', null, `id=eq.${encodeURIComponent(saleId)}`);
+    }
+    this.sales.splice(idx, 1);
+    this._saveAllLocal();
+    return true;
+  }
+
+  async deleteCancelledSales() {
+    const cancelled = this.sales.filter(s => s.status === 'anulada');
+    if (cancelled.length === 0) return 0;
+    if (this.isCloudConnected()) {
+      await this._supabaseRequest('sales', 'DELETE', null, 'status=eq.anulada');
+    }
+    this.sales = this.sales.filter(s => s.status !== 'anulada');
+    this._saveAllLocal();
+    return cancelled.length;
+  }
+
   // --------------------------------------------------------------------------
   // CONTROL Y SEGUIMIENTO DE LOTES (ADQUIRIDO -> EN VÍA -> LLEGÓ / FINALIZADO)
   // --------------------------------------------------------------------------

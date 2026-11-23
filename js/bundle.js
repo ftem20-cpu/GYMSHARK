@@ -1578,6 +1578,28 @@ class DataService {
     return sale;
   }
 
+  async deleteSale(saleId) {
+    const idx = this.sales.findIndex(s => s.id === saleId);
+    if (idx === -1) throw new Error('Venta no encontrada.');
+    if (this.isCloudConnected()) {
+      await this._supabaseRequest('sales', 'DELETE', null, `id=eq.${encodeURIComponent(saleId)}`);
+    }
+    this.sales.splice(idx, 1);
+    this._saveAllLocal();
+    return true;
+  }
+
+  async deleteCancelledSales() {
+    const cancelled = this.sales.filter(s => s.status === 'anulada');
+    if (cancelled.length === 0) return 0;
+    if (this.isCloudConnected()) {
+      await this._supabaseRequest('sales', 'DELETE', null, 'status=eq.anulada');
+    }
+    this.sales = this.sales.filter(s => s.status !== 'anulada');
+    this._saveAllLocal();
+    return cancelled.length;
+  }
+
   // --------------------------------------------------------------------------
   // CONTROL Y SEGUIMIENTO DE LOTES (ADQUIRIDO -> EN VÍA -> LLEGÓ / FINALIZADO)
   // --------------------------------------------------------------------------
@@ -2106,7 +2128,27 @@ function fmtSecondary(usdVal, customRate = null, customSym = null) {
 
 function isBsPaymentMethod(method) {
   const m = String(method || '').toLowerCase();
-  return m.includes('pago móvil') || m.includes('pago movil') || m.includes('bs') || m.includes('bolívar') || m.includes('bolivar');
+  return (
+    m.includes('pago móvil') ||
+    m.includes('pago movil') ||
+    m.includes('transferencia') ||
+    m.includes('mixto') ||
+    m.includes('bs') ||
+    m.includes('bolívar') ||
+    m.includes('bolivar')
+  );
+}
+
+function methodNeedsReference(method) {
+  const m = String(method || '').toLowerCase();
+  return (
+    m.includes('pago móvil') ||
+    m.includes('pago movil') ||
+    m.includes('zelle') ||
+    m.includes('transferencia') ||
+    m.includes('tarjeta') ||
+    m.includes('mixto')
+  );
 }
 
 function fmtDate(isoStr) {
@@ -2999,7 +3041,7 @@ function renderPOS(container, topActions) {
               <div class="form-group" style="margin-bottom:0;">
                 <label>Forma de Pago</label>
                 <select class="select" id="pos-payment">
-                  ${['Efectivo USD', 'Pago Móvil', 'Zelle', 'Transferencia', 'Tarjeta', 'Crédito']
+                  ${['Efectivo USD', 'Pago Móvil', 'Zelle', 'Transferencia', 'Tarjeta', 'Pago Mixto', 'Crédito']
                     .map(
                       m =>
                         `<option value="${m}" ${state.posPaymentMethod === m ? 'selected' : ''}>${m}</option>`
@@ -3020,13 +3062,13 @@ function renderPOS(container, topActions) {
               </div>
             </div>
 
-            <div class="form-group" id="pos-ref-group" style="margin-top:10px; margin-bottom:0; ${isBsPaymentMethod(state.posPaymentMethod) ? '' : 'display:none;'}">
-              <label>Nº de Referencia (Pago Móvil / Bs.)</label>
+            <div class="form-group" id="pos-ref-group" style="margin-top:10px; margin-bottom:0; ${methodNeedsReference(state.posPaymentMethod) ? '' : 'display:none;'}">
+              <label>Ref. (Zelle / Pago Móvil / Transferencia / Mixto)</label>
               <input
                 type="text"
                 class="input"
                 id="pos-payment-ref"
-                placeholder="Ej. 048291 (últimos dígitos o ref completa)"
+                placeholder="Ej. 048291 o detalle del pago..."
                 value="${escapeHTML(state.posPaymentReference)}"
               />
             </div>
@@ -3158,7 +3200,7 @@ function renderPOS(container, topActions) {
     state.posPaymentMethod = e.target.value;
     const refGroup = document.getElementById('pos-ref-group');
     if (refGroup) {
-      refGroup.style.display = isBsPaymentMethod(state.posPaymentMethod) ? '' : 'none';
+      refGroup.style.display = methodNeedsReference(state.posPaymentMethod) ? '' : 'none';
     }
   });
 
@@ -3248,7 +3290,7 @@ function openCheckoutConfirmModal() {
       <div class="form-group">
         <label>Forma de Pago</label>
         <select class="select" id="chk-payment">
-          ${['Efectivo USD', 'Pago Móvil', 'Zelle', 'Transferencia', 'Tarjeta', 'Pendiente por pagar']
+          ${['Efectivo USD', 'Pago Móvil', 'Zelle', 'Transferencia', 'Tarjeta', 'Pago Mixto', 'Pendiente por pagar']
             .map(
               m =>
                 `<option value="${m}" ${state.posPaymentMethod === m ? 'selected' : ''}>${m}</option>`
@@ -3257,13 +3299,13 @@ function openCheckoutConfirmModal() {
         </select>
       </div>
 
-      <div class="form-group" id="chk-ref-group" style="${isBsPaymentMethod(state.posPaymentMethod) ? '' : 'display:none;'}">
-        <label>Nº de Referencia de Pago Móvil (Bs.)</label>
+      <div class="form-group" id="chk-ref-group" style="${methodNeedsReference(state.posPaymentMethod) ? '' : 'display:none;'}">
+        <label>Ref.</label>
         <input
           type="text"
           class="input"
           id="chk-payment-ref"
-          placeholder="Escribe el número de referencia del Pago Móvil..."
+          placeholder="Número de referencia o detalle del pago..."
           value="${escapeHTML(state.posPaymentReference)}"
         />
       </div>
@@ -3303,7 +3345,7 @@ function openCheckoutConfirmModal() {
   document.getElementById('chk-payment')?.addEventListener('change', e => {
     const refGroup = document.getElementById('chk-ref-group');
     if (refGroup) {
-      refGroup.style.display = isBsPaymentMethod(e.target.value) ? '' : 'none';
+      refGroup.style.display = methodNeedsReference(e.target.value) ? '' : 'none';
     }
   });
 
@@ -3417,15 +3459,16 @@ function renderPendingSalesInline(container) {
               <option value="Zelle">Zelle</option>
               <option value="Transferencia">Transferencia</option>
               <option value="Tarjeta">Tarjeta</option>
+              <option value="Pago Mixto">Pago Mixto</option>
             </select>
           </div>
           <div class="form-group" id="pend-ref-group" style="display:none;">
-            <label>Nº de Referencia de Pago Móvil (Bs.)</label>
+            <label>Ref.</label>
             <input
               type="text"
               class="input"
               id="pend-pay-ref"
-              placeholder="Escribe el número de referencia del Pago Móvil..."
+              placeholder="Número de referencia o detalle del pago..."
               value="${escapeHTML(sale.payment_reference || '')}"
             />
           </div>
@@ -3454,7 +3497,7 @@ function renderPendingSalesInline(container) {
 
       document.getElementById('pend-pay-method')?.addEventListener('change', e => {
         const refG = document.getElementById('pend-ref-group');
-        if (refG) refG.style.display = isBsPaymentMethod(e.target.value) ? '' : 'none';
+        if (refG) refG.style.display = methodNeedsReference(e.target.value) ? '' : 'none';
       });
 
       document.getElementById('pend-pay-cancel')?.addEventListener('click', closeModal);
@@ -3540,6 +3583,8 @@ function renderSalesHistoryInline(container) {
       );
     });
 
+  const cancelledCount = db.sales.filter(s => s.status === 'anulada').length;
+
   container.innerHTML = `
     <div class="toolbar">
       <input
@@ -3548,11 +3593,20 @@ function renderSalesHistoryInline(container) {
         id="sales-search"
         placeholder="Buscar venta por cliente, recibo, pago o referencia..."
         value="${escapeHTML(state.salesSearch)}"
-        style="min-width:280px;"
+        style="min-width:260px;"
       />
       ${
         admin
-          ? `<button class="btn btn-outline" id="btn-export-sales">${icon("download")} Descargar Ventas en Excel</button>`
+          ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">
+              ${
+                cancelledCount > 0
+                  ? `<button class="btn btn-outline" style="color:var(--danger);" id="btn-purge-cancelled">
+                      Limpiar Anuladas (${cancelledCount})
+                    </button>`
+                  : ''
+              }
+              <button class="btn btn-outline" id="btn-export-sales">${icon("download")} Descargar Ventas en Excel</button>
+            </div>`
           : ''
       }
     </div>
@@ -3617,11 +3671,16 @@ function renderSalesHistoryInline(container) {
                               ${s.status === 'completada' ? 'Completada' : 'Anulada'}
                             </span>
                           </td>
-                          <td style="text-align:right;">
+                          <td style="text-align:right; white-space:nowrap;">
                             <button class="btn btn-outline btn-sm" data-view-sale="${escapeHTML(s.id)}">Ver Recibo</button>
                             ${
                               admin && s.status === 'completada'
                                 ? `<button class="btn btn-outline btn-sm" style="color:var(--danger);" data-cancel-sale="${escapeHTML(s.id)}">Anular</button>`
+                                : ''
+                            }
+                            ${
+                              admin
+                                ? `<button class="btn btn-outline btn-sm" style="color:var(--danger);" title="Eliminar definitivamente este recibo" data-del-sale="${escapeHTML(s.id)}">✕</button>`
                                 : ''
                             }
                           </td>
@@ -3648,6 +3707,18 @@ function renderSalesHistoryInline(container) {
 
   document.getElementById('btn-export-sales')?.addEventListener('click', exportSalesToCSV);
 
+  document.getElementById('btn-purge-cancelled')?.addEventListener('click', async () => {
+    if (!confirm(`¿Eliminar definitivamente las ${cancelledCount} facturas anuladas del historial?`)) return;
+    try {
+      const removed = await db.deleteCancelledSales();
+      updateChrome();
+      renderSalesHistoryInline(container);
+      showToast(`${removed} recibo(s) anulado(s) eliminado(s).`);
+    } catch (err) {
+      showToast(err.message);
+    }
+  });
+
   container.querySelectorAll('[data-view-sale]').forEach(btn => {
     btn.addEventListener('click', () => {
       const sale = db.sales.find(s => s.id === btn.dataset.viewSale);
@@ -3659,10 +3730,35 @@ function renderSalesHistoryInline(container) {
     btn.addEventListener('click', async () => {
       const sale = db.sales.find(s => s.id === btn.dataset.cancelSale);
       if (sale && confirm(`¿Anular la venta ${sale.receipt_number} y devolver las prendas al stock?`)) {
-        await db.cancelSale(sale.id);
-        updateChrome();
-        renderSalesHistoryInline(container);
-        showToast('Venta anulada y stock restaurado.');
+        try {
+          await db.cancelSale(sale.id);
+          updateChrome();
+          renderSalesHistoryInline(container);
+          showToast('Venta anulada y stock restaurado.');
+        } catch (err) {
+          showToast(err.message);
+        }
+      }
+    });
+  });
+
+  container.querySelectorAll('[data-del-sale]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const sale = db.sales.find(s => s.id === btn.dataset.delSale);
+      if (!sale) return;
+      const msg =
+        sale.status === 'completada'
+          ? `¿Eliminar definitivamente el recibo ${sale.receipt_number} del historial? (Nota: esto NO devuelve stock; si quieres devolver stock usa primero "Anular").`
+          : `¿Eliminar definitivamente el recibo anulado ${sale.receipt_number}?`;
+      if (confirm(msg)) {
+        try {
+          await db.deleteSale(sale.id);
+          updateChrome();
+          renderSalesHistoryInline(container);
+          showToast(`Recibo ${sale.receipt_number} eliminado.`);
+        } catch (err) {
+          showToast(err.message);
+        }
       }
     });
   });
@@ -3672,7 +3768,8 @@ function printCompactReceipt(sale) {
   const bName = (db.profile?.businessName || 'GYMBROS').toUpperCase();
   const saleRate = Number(sale.exchange_rate) || Number(db.profile?.exchangeRate) || 0;
   const saleSym = sale.secondary_currency || db.profile?.secondaryCurrencySymbol || 'Bs.';
-  const secTotal = saleRate > 0 ? fmtSecondary(sale.total, saleRate, saleSym) : '';
+  const showBs = isBsPaymentMethod(sale.payment_method);
+  const secTotal = showBs && saleRate > 0 ? fmtSecondary(sale.total, saleRate, saleSym) : '';
   const totalGarments = (sale.items || []).reduce((acc, it) => acc + Number(it.quantity), 0);
 
   const itemsHTML = (sale.items || [])
@@ -3828,7 +3925,7 @@ function printCompactReceipt(sale) {
       </tr>
       ${
         sale.payment_reference
-          ? `<tr><td colspan="2" style="padding-top:3px;"><span class="lbl">Ref. Pago Móvil: </span><span class="val" style="font-family:monospace; color:#4A1C21;">${escapeHTML(sale.payment_reference)}</span></td></tr>`
+          ? `<tr><td colspan="2" style="padding-top:3px;"><span class="lbl">Ref: </span><span class="val" style="font-family:monospace; color:#4A1C21;">${escapeHTML(sale.payment_reference)}</span></td></tr>`
           : ''
       }
     </table>
@@ -3902,7 +3999,8 @@ function buildWhatsAppReceiptText(sale) {
   const bName = (db.profile?.businessName || 'GYMBROS').toUpperCase();
   const saleRate = Number(sale.exchange_rate) || Number(db.profile?.exchangeRate) || 0;
   const saleSym = sale.secondary_currency || db.profile?.secondaryCurrencySymbol || 'Bs.';
-  const secTotal = saleRate > 0 ? fmtSecondary(sale.total, saleRate, saleSym) : '';
+  const showBs = isBsPaymentMethod(sale.payment_method);
+  const secTotal = showBs && saleRate > 0 ? fmtSecondary(sale.total, saleRate, saleSym) : '';
 
   const lines = [
     `*${bName}*`,
@@ -3935,8 +4033,9 @@ function openSaleReceiptModal(sale) {
   const bName = (db.profile?.businessName || 'GYMBROS').toUpperCase();
   const saleRate = Number(sale.exchange_rate) || Number(db.profile?.exchangeRate) || 0;
   const saleSym = sale.secondary_currency || db.profile?.secondaryCurrencySymbol || 'Bs.';
-  const secTotal = saleRate > 0 ? fmtSecondary(sale.total, saleRate, saleSym) : '';
-  const paidInBs = isBsPaymentMethod(sale.payment_method);
+  const showBs = isBsPaymentMethod(sale.payment_method);
+  const secTotal = showBs && saleRate > 0 ? fmtSecondary(sale.total, saleRate, saleSym) : '';
+  const needsRef = methodNeedsReference(sale.payment_method);
   const totalGarments = (sale.items || []).reduce((acc, it) => acc + Number(it.quantity), 0);
 
   openModal({
@@ -3965,7 +4064,7 @@ function openSaleReceiptModal(sale) {
             <span class="receipt-meta-val">${escapeHTML(sale.payment_method)}</span>
           </div>
           <div class="receipt-meta-row right" id="receipt-ref-display" style="${sale.payment_reference ? '' : 'display:none;'}">
-            <span class="receipt-meta-label">Ref. Pago Móvil</span>
+            <span class="receipt-meta-label">Ref.</span>
             <span class="receipt-meta-val" style="font-family:monospace; color:var(--primary);" id="receipt-ref-text">${escapeHTML(sale.payment_reference || '')}</span>
           </div>
         </div>
@@ -4035,10 +4134,10 @@ function openSaleReceiptModal(sale) {
         </div>
       </div>
 
-      <!-- Campo opcional (no sale impreso si está vacío, sólo para editar la referencia rápido) -->
-      <div class="no-print" style="margin-top:12px; padding:10px 12px; background:var(--bg-oat-soft); border:1px solid var(--border-strong); border-radius:9px; ${paidInBs || secTotal || sale.payment_reference ? '' : 'display:none;'}">
+      <!-- Campo de Ref. solo si el método lleva referencia (Pago Móvil, Zelle, Transferencia, Tarjeta, Pago Mixto) -->
+      <div class="no-print" style="margin-top:12px; padding:10px 12px; background:var(--bg-oat-soft); border:1px solid var(--border-strong); border-radius:9px; ${needsRef || sale.payment_reference ? '' : 'display:none;'}">
         <label style="display:block; font-size:11.5px; font-weight:700; color:var(--primary); margin-bottom:5px;">
-          Nº de Referencia de Pago Móvil (Bs.)
+          Ref. (${escapeHTML(sale.payment_method)})
         </label>
         <div style="display:flex; gap:6px;">
           <input
@@ -5187,38 +5286,48 @@ function openPurchaseModal(preselectedProductId = null) {
     title: 'Registrar Restock / Entrada de Lote',
     maxWidth: '550px',
     bodyHTML: `
-      <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
-        <div class="form-group">
-          <label>Prenda *</label>
-          <select class="select" id="pur-product">
-            ${physicalProducts
-              .map(
-                p =>
-                  `<option value="${escapeHTML(p.id)}" ${p.id === initialProd.id ? 'selected' : ''}>
-                    ${escapeHTML(p.name)} (${p.stock} disp.)
-                  </option>`
-              )
-              .join('')}
-          </select>
-        </div>
-
-        <div class="form-group">
-          <label>Lote en el que llegó *</label>
+      <!-- Vista previa de la prenda seleccionada + Selector de Prenda y Lote apilados -->
+      <div class="img-upload-box" style="margin-bottom:14px; align-items:flex-start;">
+        <div class="img-preview-frame" id="pur-prod-img-preview" style="width:82px; height:82px;">
           ${
-            registeredBatches.length > 0
-              ? `<select class="select" id="pur-batch">
-                  ${registeredBatches
-                    .map(b => {
-                      const items = Number(b.items_count) || 0;
-                      const shipPerUnit = items > 0 ? (Number(b.shipping_amount || 0) / items).toFixed(2) : '0.00';
-                      return `<option value="${escapeHTML(b.batch_code)}" ${b.batch_code === suggestedBatch ? 'selected' : ''}>
-                        ${escapeHTML(b.batch_code)} (Envío c/u: $${shipPerUnit})
-                      </option>`;
-                    })
-                    .join('')}
-                </select>`
-              : `<input type="text" class="input" id="pur-batch" value="${escapeHTML(suggestedBatch)}" placeholder="Ej. LOTE-NOV-01" />`
+            initialProd.image_url
+              ? `<img src="${escapeHTML(initialProd.image_url)}" alt="${escapeHTML(initialProd.name)}" />`
+              : `${icon("hanger")}`
           }
+        </div>
+        <div style="flex:1; min-width:0;">
+          <div class="form-group" style="margin-bottom:10px;">
+            <label>Prenda que llegó *</label>
+            <select class="select" id="pur-product" style="width:100%;">
+              ${physicalProducts
+                .map(
+                  p =>
+                    `<option value="${escapeHTML(p.id)}" ${p.id === initialProd.id ? 'selected' : ''}>
+                      ${escapeHTML(p.name)} (${p.stock} disp.)
+                    </option>`
+                )
+                .join('')}
+            </select>
+          </div>
+
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Lote en el que llegó *</label>
+            ${
+              registeredBatches.length > 0
+                ? `<select class="select" id="pur-batch" style="width:100%;">
+                    ${registeredBatches
+                      .map(b => {
+                        const items = Number(b.items_count) || 0;
+                        const shipPerUnit = items > 0 ? (Number(b.shipping_amount || 0) / items).toFixed(2) : '0.00';
+                        return `<option value="${escapeHTML(b.batch_code)}" ${b.batch_code === suggestedBatch ? 'selected' : ''}>
+                          ${escapeHTML(b.batch_code)} (Envío c/u: $${shipPerUnit})
+                        </option>`;
+                      })
+                      .join('')}
+                  </select>`
+                : `<input type="text" class="input" id="pur-batch" value="${escapeHTML(suggestedBatch)}" placeholder="Ej. LOTE-NOV-01" style="width:100%;" />`
+            }
+          </div>
         </div>
       </div>
 
@@ -5340,6 +5449,12 @@ function openPurchaseModal(preselectedProductId = null) {
     if (prod) {
       document.getElementById('pur-purchase-cost').value = prod.purchase_cost ?? prod.unit_cost;
       document.getElementById('pur-sale-price').value = Number(prod.sale_price) || 0;
+      const previewEl = document.getElementById('pur-prod-img-preview');
+      if (previewEl) {
+        previewEl.innerHTML = prod.image_url
+          ? `<img src="${escapeHTML(prod.image_url)}" alt="${escapeHTML(prod.name)}" />`
+          : `${icon("hanger")}`;
+      }
       applyBatchShipping();
       updatePurPreview();
     }

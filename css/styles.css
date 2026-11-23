@@ -1008,6 +1008,17 @@ body {
   background-color: #FFFFFF;
   outline: none;
   font-family: inherit;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.form-grid > * {
+  min-width: 0;
+}
+
+.form-group .input,
+.form-group .select {
+  width: 100%;
 }
 
 .input:focus, .select:focus {
