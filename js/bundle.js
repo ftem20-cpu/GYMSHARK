@@ -2476,6 +2476,46 @@ function updateInfoTicker() {
 let lastCloudPullAt = 0;
 let isCloudPulling = false;
 
+function getDataFingerprint() {
+  return JSON.stringify({
+    p: db.profile,
+    u: db.users,
+    pr: db.products,
+    s: db.sales,
+    b: db.batches,
+    pu: db.purchases,
+    e: db.expenses
+  });
+}
+
+function captureScrollPositions() {
+  return {
+    winY: typeof window !== 'undefined' ? (window.scrollY || 0) : 0,
+    posCatalog: document.querySelector('.pos-catalog-scroll')?.scrollTop || 0,
+    invTable: document.querySelector('.inv-table-scroll')?.scrollTop || 0,
+    cartBody: document.querySelector('.pos-cart-panel .card-body')?.scrollTop || 0
+  };
+}
+
+function restoreScrollPositions(pos) {
+  if (!pos) return;
+  const restore = () => {
+    const posEl = document.querySelector('.pos-catalog-scroll');
+    const invEl = document.querySelector('.inv-table-scroll');
+    const cartEl = document.querySelector('.pos-cart-panel .card-body');
+    if (posEl && pos.posCatalog) posEl.scrollTop = pos.posCatalog;
+    if (invEl && pos.invTable) invEl.scrollTop = pos.invTable;
+    if (cartEl && pos.cartBody) cartEl.scrollTop = pos.cartBody;
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function' && pos.winY) {
+      window.scrollTo(0, pos.winY);
+    }
+  };
+  restore();
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(restore);
+  }
+}
+
 async function syncFromCloudLive(showNotification = false) {
   if (!db.isCloudConnected() || isCloudPulling) return false;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -2484,15 +2524,23 @@ async function syncFromCloudLive(showNotification = false) {
   }
   isCloudPulling = true;
   try {
+    const beforeFingerprint = getDataFingerprint();
     const ok = await db.pullFromCloud();
     lastCloudPullAt = Date.now();
     if (ok) {
-      updateChrome();
-      // No re-renderizar si hay un modal abierto para no interrumpir lo que el usuario está escribiendo
-      const modalEl = document.getElementById('app-modal');
-      const isModalOpen = modalEl && !modalEl.classList.contains('hidden');
-      if (!isModalOpen) {
-        renderCurrentView();
+      const afterFingerprint = getDataFingerprint();
+      const hasChanges = beforeFingerprint !== afterFingerprint;
+
+      if (hasChanges) {
+        const scrollPos = captureScrollPositions();
+        updateChrome();
+        // No re-renderizar si hay un modal abierto para no interrumpir lo que el usuario está escribiendo
+        const modalEl = document.getElementById('app-modal');
+        const isModalOpen = modalEl && !modalEl.classList.contains('hidden');
+        if (!isModalOpen) {
+          renderCurrentView();
+          restoreScrollPositions(scrollPos);
+        }
       }
       if (showNotification) showToast('Datos sincronizados con la nube.');
     }
